@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import PersonList from './components/PersonList'
 import TickerCard from './components/Ticker'
 import { loadState, saveState } from './storage'
-import { tickerRate, type Person, type Ticker } from './types'
+import { CURRENCIES, tickerRate, type Currency, type Person, type Ticker } from './types'
 
 function newTicker(participantIds: string[]): Ticker {
     return {
@@ -10,7 +10,7 @@ function newTicker(participantIds: string[]): Ticker {
         name:           '',
         participantIds,
         running:        false,
-        accumulated:    0,
+        elapsedSeconds: 0,
         startedAt:      null,
     }
 }
@@ -18,46 +18,30 @@ function newTicker(participantIds: string[]): Ticker {
 export default function App() {
     const initial = useRef(loadState()).current
 
-    const [people, setPeople]   = useState<Person[]>(initial.people)
-    const [tickers, setTickers] = useState<Ticker[]>(initial.tickers)
+    const [currency, setCurrency] = useState<Currency>(initial.currency)
+    const [people, setPeople]     = useState<Person[]>(initial.people)
+    const [tickers, setTickers]   = useState<Ticker[]>(initial.tickers)
+    const [now, setNow]           = useState<number>(() => Date.now())
 
-    // Catch up elapsed time for any ticker that was running when the page closed.
-    // Runs once on mount.
-    const catchUpDone = useRef(false)
+    // While any ticker is running, drive smooth re-renders via requestAnimationFrame.
+    // `elapsedSeconds` stays as the pause-time baseline; the live value is computed
+    // at render from `now - startedAt`.
+    const anyRunning = tickers.some(t => t.running)
     useEffect(() => {
-        if (catchUpDone.current) return
-        catchUpDone.current = true
-
-        const now = Date.now()
-        setTickers(prev => prev.map(t => {
-            if (!t.running || t.startedAt === null) return t
-            const elapsedSeconds = (now - t.startedAt) / 1000
-            const rate = tickerRate(t, initial.people)
-            return {
-                ...t,
-                accumulated: t.accumulated + elapsedSeconds * rate,
-                startedAt:   now,
-            }
-        }))
-    }, [initial.people])
-
-    // Global 1s tick. Advances every running ticker by its current rate.
-    useEffect(() => {
-        const anyRunning = tickers.some(t => t.running)
         if (!anyRunning) return
 
-        const id = setInterval(() => {
-            setTickers(prev => prev.map(t => {
-                if (!t.running) return t
-                return { ...t, accumulated: t.accumulated + tickerRate(t, people) }
-            }))
-        }, 1000)
-        return () => clearInterval(id)
-    }, [tickers, people])
+        let raf = 0
+        const frame = () => {
+            setNow(Date.now())
+            raf = requestAnimationFrame(frame)
+        }
+        raf = requestAnimationFrame(frame)
+        return () => cancelAnimationFrame(raf)
+    }, [anyRunning])
 
     useEffect(() => {
-        saveState({ people, tickers })
-    }, [people, tickers])
+        saveState({ currency, people, tickers })
+    }, [currency, people, tickers])
 
     // When a person is removed, drop them from every ticker's participant list.
     function handlePeopleChange(next: Person[]) {
@@ -86,11 +70,22 @@ export default function App() {
     }
 
     function pauseTicker(id: string) {
-        updateTicker(id, { running: false, startedAt: null })
+        const t = tickers.find(x => x.id === id)
+        if (!t) return
+        if (!t.running || t.startedAt === null) {
+            updateTicker(id, { running: false, startedAt: null })
+            return
+        }
+        const runSegment = Math.max(0, (Date.now() - t.startedAt) / 1000)
+        updateTicker(id, {
+            running:        false,
+            startedAt:      null,
+            elapsedSeconds: t.elapsedSeconds + runSegment,
+        })
     }
 
     function resetTicker(id: string) {
-        updateTicker(id, { running: false, startedAt: null, accumulated: 0 })
+        updateTicker(id, { running: false, startedAt: null, elapsedSeconds: 0 })
     }
 
     function toggleParticipant(tickerId: string, personId: string) {
@@ -103,10 +98,24 @@ export default function App() {
         updateTicker(tickerId, { participantIds: nextIds })
     }
 
+    const selectClass = 'bg-gray-800 rounded-lg px-3 py-2 text-sm text-gray-100 border border-gray-700 focus:outline-none focus:border-gray-500 cursor-pointer'
+
     return (
         <div className="min-h-screen bg-gray-950 text-gray-100">
             <div className="max-w-2xl mx-auto px-6 py-12 space-y-10">
-                <h1 className="text-2xl font-bold tracking-tight">Salary Cost Ticker</h1>
+                <div className="flex items-center justify-between gap-4">
+                    <h1 className="text-2xl font-bold tracking-tight">Salary Cost Ticker</h1>
+                    <select
+                        value={currency}
+                        onChange={e => setCurrency(e.target.value as Currency)}
+                        className={selectClass}
+                        aria-label="Currency"
+                    >
+                        {CURRENCIES.map(c => (
+                            <option key={c} value={c}>{c}</option>
+                        ))}
+                    </select>
+                </div>
 
                 <div className="space-y-4">
                     <div className="flex items-center justify-between">
@@ -130,6 +139,8 @@ export default function App() {
                                 ticker={t}
                                 people={people}
                                 perSecond={tickerRate(t, people)}
+                                currency={currency}
+                                now={now}
                                 onRename={name => updateTicker(t.id, { name })}
                                 onToggleParticipant={personId => toggleParticipant(t.id, personId)}
                                 onStart={() => startTicker(t.id)}

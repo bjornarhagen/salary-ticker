@@ -1,4 +1,4 @@
-import type { AppState, Person, SalaryUnit, Ticker } from './types'
+import { CURRENCIES, tickerRate, type AppState, type Currency, type Person, type SalaryUnit, type Ticker } from './types'
 
 const STORAGE_KEY = 'salary-ticker'
 
@@ -6,6 +6,10 @@ const SALARY_UNITS: SalaryUnit[] = ['hourly', 'monthly', 'yearly']
 
 function isSalaryUnit(v: unknown): v is SalaryUnit {
     return typeof v === 'string' && (SALARY_UNITS as string[]).includes(v)
+}
+
+function isCurrency(v: unknown): v is Currency {
+    return typeof v === 'string' && (CURRENCIES as string[]).includes(v)
 }
 
 function parsePerson(v: unknown): [Person, null] | [null, Error] {
@@ -18,26 +22,41 @@ function parsePerson(v: unknown): [Person, null] | [null, Error] {
     return [{ id: o.id, name: o.name, salary: o.salary, unit: o.unit }, null]
 }
 
-function parseTicker(v: unknown): [Ticker, null] | [null, Error] {
+// Parses a ticker from either the current shape (elapsedSeconds) or the
+// intermediate shape (accumulated dollars). When falling back to
+// accumulated, we convert dollars -> seconds using the current rate.
+function parseTicker(v: unknown, people: Person[]): [Ticker, null] | [null, Error] {
     if (typeof v !== 'object' || v === null) return [null, new Error('ticker not object')]
     const o = v as Record<string, unknown>
-    if (typeof o.id !== 'string')          return [null, new Error('ticker.id not string')]
-    if (typeof o.name !== 'string')        return [null, new Error('ticker.name not string')]
-    if (!Array.isArray(o.participantIds))  return [null, new Error('ticker.participantIds not array')]
-    if (typeof o.running !== 'boolean')    return [null, new Error('ticker.running not boolean')]
-    if (typeof o.accumulated !== 'number') return [null, new Error('ticker.accumulated not number')]
+    if (typeof o.id !== 'string')         return [null, new Error('ticker.id not string')]
+    if (typeof o.name !== 'string')       return [null, new Error('ticker.name not string')]
+    if (!Array.isArray(o.participantIds)) return [null, new Error('ticker.participantIds not array')]
+    if (typeof o.running !== 'boolean')   return [null, new Error('ticker.running not boolean')]
     if (o.startedAt !== null && typeof o.startedAt !== 'number') {
         return [null, new Error('ticker.startedAt not number|null')]
     }
+
     const participantIds = o.participantIds.filter((x): x is string => typeof x === 'string')
-    return [{
-        id:             o.id,
-        name:           o.name,
+
+    const base: Omit<Ticker, 'elapsedSeconds'> = {
+        id:          o.id,
+        name:        o.name,
         participantIds,
-        running:        o.running,
-        accumulated:    o.accumulated,
-        startedAt:      o.startedAt,
-    }, null]
+        running:     o.running,
+        startedAt:   o.startedAt,
+    }
+
+    if (typeof o.elapsedSeconds === 'number') {
+        return [{ ...base, elapsedSeconds: o.elapsedSeconds }, null]
+    }
+
+    if (typeof o.accumulated === 'number') {
+        const rate = tickerRate({ ...base, elapsedSeconds: 0 }, people)
+        const elapsedSeconds = rate > 0 ? o.accumulated / rate : 0
+        return [{ ...base, elapsedSeconds }, null]
+    }
+
+    return [{ ...base, elapsedSeconds: 0 }, null]
 }
 
 // Migrates the pre-multi-ticker format `{ people, running, accumulated, startedAt }`
@@ -54,18 +73,25 @@ function migrateLegacy(raw: Record<string, unknown>, people: Person[]): Ticker[]
     const accumulated = typeof raw.accumulated === 'number'  ? raw.accumulated : 0
     const startedAt   = typeof raw.startedAt   === 'number'  ? raw.startedAt   : null
 
+    const participantIds = people.map(p => p.id)
+    const rate = tickerRate(
+        { id: '', name: '', participantIds, running: false, elapsedSeconds: 0, startedAt: null },
+        people,
+    )
+    const elapsedSeconds = rate > 0 ? accumulated / rate : 0
+
     return [{
-        id:             crypto.randomUUID(),
-        name:           'Ticker',
-        participantIds: people.map(p => p.id),
+        id:   crypto.randomUUID(),
+        name: 'Ticker',
+        participantIds,
         running,
-        accumulated,
+        elapsedSeconds,
         startedAt,
     }]
 }
 
 export function loadState(): AppState {
-    const empty: AppState = { people: [], tickers: [] }
+    const empty: AppState = { currency: 'USD', people: [], tickers: [] }
 
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return empty
@@ -80,6 +106,8 @@ export function loadState(): AppState {
     if (typeof parsed !== 'object' || parsed === null) return empty
     const obj = parsed as Record<string, unknown>
 
+    const currency: Currency = isCurrency(obj.currency) ? obj.currency : 'USD'
+
     const people: Person[] = []
     if (Array.isArray(obj.people)) {
         for (const item of obj.people) {
@@ -92,7 +120,7 @@ export function loadState(): AppState {
     let tickers: Ticker[] = []
     if (Array.isArray(obj.tickers)) {
         for (const item of obj.tickers) {
-            const [ticker, err] = parseTicker(item)
+            const [ticker, err] = parseTicker(item, people)
             if (err) continue
             tickers.push(ticker)
         }
@@ -100,7 +128,7 @@ export function loadState(): AppState {
         tickers = migrateLegacy(obj, people)
     }
 
-    return { people, tickers }
+    return { currency, people, tickers }
 }
 
 export function saveState(state: AppState) {

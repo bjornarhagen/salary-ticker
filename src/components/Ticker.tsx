@@ -1,9 +1,11 @@
-import type { Person, Ticker } from '../types'
+import { formatCurrency, type Currency, type Person, type Ticker } from '../types'
 
 interface Props {
     ticker: Ticker
     people: Person[]
     perSecond: number
+    currency: Currency
+    now: number
     onRename: (name: string) => void
     onToggleParticipant: (personId: string) => void
     onStart: () => void
@@ -12,34 +14,26 @@ interface Props {
     onDelete: () => void
 }
 
-function fmtCost(n: number): string {
-    return new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency: 'USD',
-        minimumFractionDigits: 4,
-        maximumFractionDigits: 4,
-    }).format(n)
-}
-
-function fmtRate(n: number, digits: number): string {
-    return new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency: 'USD',
-        minimumFractionDigits: digits,
-        maximumFractionDigits: digits,
-    }).format(n)
-}
-
-function primaryLabel(running: boolean, accumulated: number): string {
+function primaryLabel(running: boolean, displaySeconds: number): string {
     if (running) return 'Pause'
-    if (accumulated > 0) return 'Continue'
+    if (displaySeconds > 0) return 'Continue'
     return 'Start'
+}
+
+function runSegmentSeconds(ticker: Ticker, now: number): number {
+    if (!ticker.running) return 0
+    if (ticker.startedAt === null) return 0
+    const diff = (now - ticker.startedAt) / 1000
+    if (diff < 0) return 0
+    return diff
 }
 
 export default function TickerCard({
     ticker,
     people,
     perSecond,
+    currency,
+    now,
     onRename,
     onToggleParticipant,
     onStart,
@@ -47,9 +41,11 @@ export default function TickerCard({
     onReset,
     onDelete,
 }: Props) {
-    const { name, participantIds, running, accumulated } = ticker
+    const { name, participantIds, running } = ticker
     const selected = new Set(participantIds)
-    const label = primaryLabel(running, accumulated)
+    const displaySeconds = ticker.elapsedSeconds + runSegmentSeconds(ticker, now)
+    const label = primaryLabel(running, displaySeconds)
+    const cost = perSecond * displaySeconds
 
     function handlePrimary() {
         if (running) {
@@ -80,12 +76,12 @@ export default function TickerCard({
 
             <div>
                 <div className={`text-4xl font-mono font-bold tabular-nums transition-colors ${running ? 'text-green-400' : 'text-gray-300'}`}>
-                    {fmtCost(accumulated)}
+                    {formatCurrency(cost, currency, 2)}
                 </div>
                 <div className="mt-2 text-xs text-gray-500 space-x-3">
-                    <span>{fmtRate(perSecond, 6)} / sec</span>
-                    <span>{fmtRate(perSecond * 60, 4)} / min</span>
-                    <span>{fmtRate(perSecond * 3600, 2)} / hr</span>
+                    <span>{formatCurrency(perSecond, currency, 6)} / sec</span>
+                    <span>{formatCurrency(perSecond * 60, currency, 4)} / min</span>
+                    <span>{formatCurrency(perSecond * 3600, currency, 2)} / hr</span>
                 </div>
             </div>
 
@@ -130,7 +126,7 @@ export default function TickerCard({
                 </button>
                 <button
                     onClick={onReset}
-                    disabled={accumulated === 0 && !running}
+                    disabled={displaySeconds === 0 && !running}
                     className="px-6 py-2 rounded-lg font-semibold text-sm bg-gray-700 hover:bg-gray-600 text-gray-200 cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                     Reset
