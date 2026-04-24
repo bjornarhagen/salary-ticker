@@ -1,0 +1,11 @@
+services:
+    salary-ticker:
+        container_name: salary-ticker
+        build:
+            context: .
+            dockerfile: Dockerfile.local
+        ports:
+            - "3000:3000"
+        volumes:
+            - ../:/app
+        tty: true
