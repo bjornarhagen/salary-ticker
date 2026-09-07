@@ -23,12 +23,14 @@ docker build --platform linux/amd64 -t salary-ticker:local .
 python3 scripts/check-container.py salary-ticker:local
 ```
 
-GitHub Actions builds and tests the image on AMD64, then publishes the tested
-image to GHCR with its source revision. Images remain private even though this
-source repository is public. The cluster authenticates with a separate
-read-only pull credential; no registry credentials enter this source repository
-or image. Future deployment updates pin the workflow's immutable image digest
-in `bjornarhagen/ai-devops` and require infrastructure deployment approval.
+This repository's GitHub Actions workflow builds and tests on AMD64 without
+publishing. The private `bjornarhagen/ai-devops` repository owns publication of
+the cluster image to `ghcr.io/bjornarhagen/salary-ticker-cluster`, using a pinned
+source revision. Keeping publication there separates public source from
+private image access. The cluster uses a separate read-only pull credential;
+no registry credentials enter this source repository or image. Deployment
+updates pin the tested immutable digest in the infrastructure repository and
+require deployment approval.
 
 Kubernetes declarations, DNS, SOPS-encrypted pull credentials, TLS and rollback
 procedures belong to the infrastructure repository. No application or storage
