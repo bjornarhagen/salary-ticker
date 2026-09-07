@@ -1,0 +1,59 @@
+name: Remove approved unused public package
+
+on:
+  push:
+    branches: [codex/remove-public-salary-package]
+    paths: [.github/workflows/remove-public-package.yml]
+
+permissions: {}
+
+jobs:
+  remove:
+    if: github.repository == 'bjornarhagen/salary-ticker'
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+    steps:
+      - name: Verify exact unused package, delete it, and verify absence
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 - <<'PYTHON'
+          import json, os, urllib.error, urllib.request
+          base = 'https://api.github.com/users/bjornarhagen/packages/container/salary-ticker'
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, *args, **kwargs):
+                  raise RuntimeError('Refusing authenticated redirect')
+          opener = urllib.request.build_opener(NoRedirect)
+          def request(url, method='GET'):
+              req = urllib.request.Request(url, method=method, headers={
+                  'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                  'Accept': 'application/vnd.github+json',
+                  'X-GitHub-Api-Version': '2022-11-28',
+              })
+              try:
+                  with opener.open(req, timeout=20) as response:
+                      raw = response.read()
+                      return response.status, json.loads(raw) if raw else None
+              except urllib.error.HTTPError as error:
+                  return error.code, None
+          status, package = request(base)
+          if status == 404:
+              print('Approved package is already absent.')
+              raise SystemExit(0)
+          assert status == 200, f'Package read failed: HTTP {status}'
+          assert package['id'] == 14916873
+          assert package['name'] == 'salary-ticker' and package['visibility'] == 'public'
+          assert package['created_at'] == '2026-09-07T18:46:08Z'
+          assert package['version_count'] == 1
+          status, versions = request(base + '/versions')
+          assert status == 200 and len(versions) == 1
+          assert versions[0]['name'] == 'sha256:70991f277921e1a85cb8d740ba3e4b03d9eda50126066589c27bea0978f50eaf'
+          assert versions[0]['metadata']['container']['tags'] == ['sha-bebaccc066d29b159c878b557ba38cca550d56dd']
+          print('Verified exact approved public package and its only version.')
+          status, _ = request(base, 'DELETE')
+          assert status == 204, f'Package deletion failed: HTTP {status}'
+          status, _ = request(base)
+          assert status == 404, f'Package still visible after deletion: HTTP {status}'
+          print('Deleted unused public salary-ticker package; API now returns 404.')
+          PYTHON
