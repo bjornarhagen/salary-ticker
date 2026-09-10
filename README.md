@@ -35,3 +35,8 @@ require deployment approval.
 Kubernetes declarations, DNS, SOPS-encrypted pull credentials, TLS and rollback
 procedures belong to the infrastructure repository. No application or storage
 schema changes are required for the hosting migration.
+
+## Cluster delivery
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the release branch, current automation
+status, CI policy, deployment ownership and rollback instructions.
